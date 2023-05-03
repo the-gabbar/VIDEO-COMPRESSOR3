@@ -1,4 +1,6 @@
-pyrogram==1.4.16
-requests
-ffmpeg
+pyrogram
+tgcrypto
+ffmpeg-python
+tqdm
+
 
