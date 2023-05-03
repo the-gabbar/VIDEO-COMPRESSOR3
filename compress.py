@@ -1,4 +1,5 @@
 import os
+import asyncio
 import ffmpeg
 from pyrogram import Client, filters
 from pyrogram.types import Message, InputMediaVideo
@@ -32,29 +33,27 @@ async def compress_video(bot, message):
     # Download the video file
     original_file = await message.download()
 
-    # Get video duration
-    probe = ffmpeg.probe(original_file)
-    video_info = next(s for s in probe['streams'] if s['codec_type'] == 'video')
-    duration = float(video_info['duration'])
-    
-    # Compress the video file with progress bar
-    progress = 0
-    def progress_callback(progress_bar):
-        nonlocal progress
-        new_progress = int(progress_bar.progress * 100)
-        if new_progress > progress:
-            progress = new_progress
-            await message.edit_text(f'Compressing... {progress}%')
-
+    # Compress the video file
     compressed_file = os.path.splitext(original_file)[0] + '_compressed.mp4'
-    (
-        ffmpeg
-        .input(original_file)
-        .output(compressed_file, vcodec='libx265', crf=28, preset='fast')
-        .global_args('-progress', 'pipe:1')
-        .overwrite_output()
-        .run_async(pipe_stdout=True, pipe_stderr=True, quiet=True, progress_callback=progress_callback)
-    )
+    input_file = ffmpeg.input(original_file)
+    video = input_file.video
+    audio = input_file.audio
+    output_file = ffmpeg.output(video, audio, compressed_file, vcodec='libx265', crf=28)
+    progress = ffmpeg.progress.Progress()
+
+    # Set up progress bar
+    def progress_callback(progress_dict):
+        if 'frame' in progress_dict:
+            progress.update(progress_dict['frame'], progress_dict['fps'], progress_dict['bitrate'])
+            percentage = round(progress_dict['progress'] * 100)
+            asyncio.create_task(message.edit_text(f'Compressing... {percentage}%'))
+    output_file = output_file.global_args('-progress', 'pipe:1')
+    try:
+        process = output_file.run_async(pipe_stdout=True, pipe_stderr=True, overwrite_output=True, \
+            stderr=subprocess.PIPE, progress_callback=progress_callback)
+        await process.wait()
+    except ffmpeg.Error as e:
+        await message.edit_text(f"An error occurred while compressing the video: {e.stderr.decode()}")
 
     # Send the compressed video file back to the user
     await message.reply_video(video=compressed_file)
